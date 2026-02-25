@@ -1,0 +1,14 @@
+# fly.toml — Configuration Fly.io
+app = "wow-discord-tracker"
+primary_region = "cdg"
+
+[build]
+
+# Pas de serveur HTTP — bot Discord uniquement
+[processes]
+  bot = "npx tsx src/index.ts"
+
+# Pas de health check HTTP (ce n'est pas un serveur web)
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
