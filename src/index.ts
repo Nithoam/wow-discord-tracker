@@ -56,11 +56,15 @@ client.on('interactionCreate', async (interaction) => {
     await handleCommand(interaction, tracker);
   } catch (err) {
     console.error('[Bot] Erreur commande:', err);
-    const reply = { content: 'Une erreur est survenue.', ephemeral: true };
-    if (interaction.deferred || interaction.replied) {
-      await interaction.editReply(reply);
-    } else {
-      await interaction.reply(reply);
+    try {
+      const reply = { content: 'Une erreur est survenue.', ephemeral: true };
+      if (interaction.deferred || interaction.replied) {
+        await interaction.editReply(reply);
+      } else {
+        await interaction.reply(reply);
+      }
+    } catch {
+      // Interaction expirée ou déjà traitée — rien à faire
     }
   }
 });

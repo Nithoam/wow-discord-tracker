@@ -15,6 +15,7 @@ export interface RatingColor {
 }
 
 export interface MythicPlusRun {
+  dungeonId: number;
   dungeonName: string;
   keystoneLevel: number;
   duration: number;       // en millisecondes
@@ -34,6 +35,8 @@ export interface CharacterInfo {
   class: string;
   level: number;
   faction: string;
+  guildName?: string;
+  guildRealm?: string;
 }
 
 async function getAccessToken(): Promise<string> {
@@ -86,6 +89,7 @@ export async function getMythicPlusProfile(realmSlug: string, characterName: str
 
     const rawRuns: any[] = currentSeason?.best_runs ?? [];
     const bestRuns: MythicPlusRun[] = rawRuns.map((run: any) => ({
+      dungeonId: (run.dungeon?.id ?? 0) as number,
       dungeonName: (run.dungeon?.name ?? 'Unknown') as string,
       keystoneLevel: (run.keystone_level ?? 0) as number,
       duration: (run.duration ?? 0) as number,
@@ -170,6 +174,32 @@ export async function getRaidProgression(realmSlug: string, characterName: strin
 }
 
 /**
+ * Cache mémoire pour les timers de donjon M+ (ne change pas pendant une saison).
+ */
+const dungeonTimerCache = new Map<number, number>();
+
+/**
+ * Récupère le temps limite (par time) d'un donjon M+ en millisecondes.
+ * Utilise keystone_upgrades[0].qualifying_duration (seuil +1 upgrade = timer du donjon).
+ * Résultat caché en mémoire car statique par saison.
+ */
+export async function getDungeonTimerLimit(dungeonId: number): Promise<number> {
+  const cached = dungeonTimerCache.get(dungeonId);
+  if (cached !== undefined) return cached;
+
+  const data = await apiGet(
+    `/data/wow/mythic-keystone/dungeon/${dungeonId}`,
+    'dynamic'
+  ) as Record<string, any>;
+
+  const upgrades: any[] = data.keystone_upgrades ?? [];
+  const parTime: number = upgrades[0]?.qualifying_duration ?? 0;
+
+  dungeonTimerCache.set(dungeonId, parTime);
+  return parTime;
+}
+
+/**
  * Récupère les infos de base du personnage (classe, niveau, avatar).
  */
 export async function getCharacterInfo(realmSlug: string, characterName: string): Promise<CharacterInfo | null> {
@@ -185,9 +215,54 @@ export async function getCharacterInfo(realmSlug: string, characterName: string)
       class: (data.character_class?.name ?? 'Inconnu') as string,
       level: (data.level ?? 0) as number,
       faction: (data.faction?.name ?? 'Inconnu') as string,
+      guildName: (data.guild?.name as string) ?? undefined,
+      guildRealm: (data.guild?.realm?.slug as string) ?? undefined,
     };
   } catch (err: unknown) {
     if (axios.isAxiosError(err) && err.response?.status === 404) return null;
     throw err;
+  }
+}
+
+/**
+ * Cache mémoire pour les emblèmes de guilde (changent rarement).
+ */
+const guildEmblemCache = new Map<string, string | null>();
+
+/**
+ * Récupère l'URL de l'emblème d'une guilde via l'API guild crest.
+ * Retourne null si la guilde n'a pas d'emblème ou en cas d'erreur.
+ */
+export async function getGuildEmblemUrl(realmSlug: string, guildName: string): Promise<string | null> {
+  const guildSlug = guildName.toLowerCase().replace(/ /g, '-');
+  const cacheKey = `${realmSlug}/${guildSlug}`;
+
+  const cached = guildEmblemCache.get(cacheKey);
+  if (cached !== undefined) return cached;
+
+  try {
+    const data = await apiGet(
+      `/data/wow/guild/${realmSlug}/${guildSlug}`,
+      'profile'
+    ) as Record<string, any>;
+
+    const mediaHref: string | undefined = data.crest?.emblem?.media?.key?.href;
+    if (!mediaHref) {
+      guildEmblemCache.set(cacheKey, null);
+      return null;
+    }
+
+    const token = await getAccessToken();
+    const mediaResponse = await axios.get(mediaHref, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    const url: string | undefined = mediaResponse.data?.assets?.[0]?.value;
+    const result = url ?? null;
+    guildEmblemCache.set(cacheKey, result);
+    return result;
+  } catch {
+    guildEmblemCache.set(cacheKey, null);
+    return null;
   }
 }
